@@ -1,247 +1,176 @@
 #=================================================
-# https://github.com/P3TERX/Actions-OpenWrt
+# 自动构建 OpenWrt G-DOCK2.0
+# https://github.com/ytalm/OpenWrt-R619AC-128M
 # Description: Build OpenWrt using GitHub Actions
 # Lisence: MIT
-# Author: P3TERX
+# Author: flyheart
+# 感谢p3terx大神的一键编译脚本
+# https://github.com/P3TERX/Actions-OpenWrt
 # Blog: https://p3terx.com
 #=================================================
+#
+#修改以下代码或者开启触发开关都好，要严格按格式对好,前面有多少空格也要看清楚
+#代码里有 name: 后面的内容随便改,冒号后面是有个空格的,如果修改固件名字就要考虑能不能显示出你想要的
 
 name: Build G-Dock Lean's OpenWrt
 
 on:
   repository_dispatch:
-    types: [lean, gdock]
-  workflow_dispatch:
-  schedule:
-    - cron: 0 18 * * *
-#  watch:
-#    types: started
 
+#release发布触发开始编译(只是一个触发条件,不会发布的,又麻烦,没卵用,不用研究) 
+  release:
+    types: [lean, gdock]
+  
+#编辑任意指定文件触发开始编译(去掉下面5个#开启,最下面一行是指定修改什么文件就触发编译,我现在是修改mod.config文件触发)  
+  push:                               # push 操作
+    branches:                         # 分支
+      - master                        # 主分支
+    paths:                            # 路径
+      - "gdock-lean-openwrt.config"   # 监听mod.config的push操作
+
+#定时触发开始编译(开启定时编译请先关闭SSH,要不然SSH没人管,会卡SSH编译失败)
+  schedule:                           # 时间表
+    - cron: 0 4 28 * *                 # 每月1日国际时间4点，北京时间中午12点执行(北京+8)
+  
+#点☆Star触发开始编译  
+  watch:                              # 监视操作
+   types: started                    # 点击 star 之后
+    
 env:
-  REPO_URL: https://github.com/coolsnowwolf/lede
-  REPO_BRANCH: master
-  CONFIG_FILE: config/lean/ipq40xx/gdock-lean-openwrt.config
-  DIY_SH: scripts/lean-openwrt.sh
+  REPO_URL: https://github.com/coolsnowwolf/lede     #编译固件源码链接（请勿修改）
+  REPO_BRANCH: master                                #源码链接的分支（请勿修改）
+  FEEDS_CONF: feeds.conf.default               
+  CONFIG_FILE: config/lean/ipq40xx/gdock-lean-openwrt.config  #配置文件（可SSH远程定制固件插件，也可在本地提取配置粘贴到此文件）
+  DIY_SH: scripts/lean-openwrt.sh                    #自定义执行文件
   IPV6MOD_IN_FIRMWARE: true
-  KMODS_IN_FIRMWARE: false
   UPLOAD_RCLONE: true
-  UPLOAD_WETRANSFER: true
-  UPLOAD_COWTRANSFER: true
-  TZ: Asia/Shanghai
+  UPLOAD_BIN_DIR: true                               #上传【bin文件夹】到github空间（true=开启）（false=关闭）
+  UPLOAD_FIRMWARE: true                              #上传固件到github空间（true=开启）（false=关闭）
+  UPLOAD_COWTRANSFER: true                           #上传固件到到【奶牛快传】（true=开启）（false=关闭）   
+  UPLOAD_WETRANSFER: true                            #上传固件到到【WETRANSFER】（true=开启）（false=关闭）
+  TZ: Asia/Shanghai                                  #时区 亚洲/上海
+
 
 jobs:
-  Build:
+  build:
     runs-on: ubuntu-18.04
-
-    outputs:
-      OPENWRTROOT: ${{ steps.update.outputs.OPENWRTROOT }}
-      PLATFORM: ${{ steps.compile.outputs.PLATFORM }}
-      TARGET: ${{ steps.compile.outputs.TARGET }}
-      SUBTARGET: ${{ steps.compile.outputs.SUBTARGET }}
-      FIRMWARE: ${{ steps.compile.outputs.FIRMWARE }}
-      GENERATE_STATUS: ${{ steps.generate.outputs.GENERATE_STATUS }}
+    if: github.event.repository.owner.id == github.event.sender.id
 
     steps:
-    - name: Checkout
+    - name: 准备结束                          # 1.导入主分支
       uses: actions/checkout@main
 
-    - name: Initialization Environment
+    - name: 开始安装编译所需系统                # 2.初始化环境
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install $(curl -fsSL git.io/depends-ubuntu-1804) tree
+        sudo -E apt-get -qq install $(curl -fsSL git.io/JURWx)
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
 
-    - name: Clone Source Code
+    - name: 下载固件源码
+      working-directory: /workdir
       run: |
         df -hT $PWD
         git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: Update Feeds
-      id: update
+    - name: 加载feeds跟自定义插件
       run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $DIY_SH
         cd openwrt
-        echo "OPENWRTROOT=$PWD" >> $GITHUB_ENV
-        echo "::set-output name=OPENWRTROOT::$(echo $PWD)"
-        sed -i 's/coolsnowwolf\/luci/Lienol\/openwrt-luci.git;18.06/g' feeds.conf.default
-        ./scripts/feeds update -a
+        $GITHUB_WORKSPACE/$DIY_SH
 
-    - name: Install Feeds
+    - name: 下载feeds
+      run: cd openwrt && ./scripts/feeds update -a
+
+    - name: 安装feeds跟自定义插件
+      run: cd openwrt && ./scripts/feeds install -a
+
+    - name: 加载diy.config设置
       run: |
-        cd $OPENWRTROOT
-        ./scripts/feeds install -a
+        [ -e files ] && mv files openwrt/files
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_SH
 
-    - name: Load Custom Configuration
-      run: |
-        [ -e files ] && mv files $OPENWRTROOT/files
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE $OPENWRTROOT/.config
-        chmod +x scripts/*.sh
-        cd $OPENWRTROOT
-        ../$DIY_SH
-        ../scripts/preset-clash-core.sh armv7
-        ../scripts/preset-terminal-tools.sh
+   # - name: SSH远程连接服务器配置固件
+   #   uses: P3TERX/debugger-action@main
+   #   if: env.SSH_ACTIONS == 'true' || contains(github.event.action, 'ssh')
 
-    - name: Download Package
+    - name: 下载软件包
       id: package
       run: |
-        cd $OPENWRTROOT
-        if "$KMODS_IN_FIRMWARE" = 'true'
-        then
-            echo "CONFIG_ALL_KMODS=y" >> .config
-        fi
+        cd openwrt
         make defconfig
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    - name: Compile Packages
+    - name: 开始编译固件
       id: compile
       run: |
-        cd $OPENWRTROOT
+        cd openwrt
+        make -j$(nproc) || make -j1 || make -j1 V=s
         echo -e "$(nproc) thread compile"
-        make tools/compile -j$(nproc) || make tools/compile -j1 V=s
-        make toolchain/compile -j$(nproc) || make toolchain/compile -j1 V=s
-        make target/compile -j$(nproc) || make target/compile -j1 V=s IGNORE_ERRORS=1
-        make diffconfig
-        make package/compile -j$(nproc) IGNORE_ERRORS=1 || make package/compile -j1 V=s IGNORE_ERRORS=1
-        make package/index
-        cd $OPENWRTROOT/bin/packages/*
-        PLATFORM=$(basename `pwd`)
-        echo "PLATFORM=$PLATFORM" >> $GITHUB_ENV
-        echo "::set-output name=PLATFORM::$(echo $PLATFORM)"
-        cd $OPENWRTROOT/bin/targets/*
-        TARGET=$(basename `pwd`)
-        echo "TARGET=$TARGET" >> $GITHUB_ENV
-        echo "::set-output name=TARGET::$(echo $TARGET)"
-        cd *
-        SUBTARGET=$(basename `pwd`)
-        echo "SUBTARGET=$SUBTARGET" >> $GITHUB_ENV
-        echo "::set-output name=SUBTARGET::$(echo $SUBTARGET)"
-        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-        echo "::set-output name=FIRMWARE::$(echo $PWD)"
-        echo "::set-output name=COMPILE_STATUS::success"
-
-    - name: Generate Firmware
-      if: steps.compile.outputs.COMPILE_STATUS == 'success'
-      id: generate
+        echo "::set-output name=status::success"
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "::set-output name=DEVICE_NAME::$(cat DEVICE_NAME)"
+        echo "::set-output name=FILE_DATE::$(date +"%Y%m%d%H%M")"
+    - name: 检查github储存空间情况
+      if: (!cancelled())
+      run: df -hT
+      
+    - name: 准备Artifact
       run: |
-        cd config/opkg
-        sed -i "s/subtarget/$SUBTARGET/g" distfeeds*.conf
-        sed -i "s/target\//$TARGET\//g" distfeeds*.conf
-        sed -i "s/platform/$PLATFORM/g" distfeeds*.conf
-        cd $OPENWRTROOT
-        mkdir -p files/etc/opkg
-        cp ../config/opkg/distfeeds-packages-server.conf files/etc/opkg/distfeeds.conf.server
-        if "$KMODS_IN_FIRMWARE" = 'true'
-        then
-            mkdir -p files/www/snapshots
-            cp -r bin/targets files/www/snapshots
-            cp ../config/opkg/distfeeds-18.06-local.conf files/etc/opkg/distfeeds.conf
-        else
-            cp ../config/opkg/distfeeds-18.06-remote.conf files/etc/opkg/distfeeds.conf
-        fi
-        cp files/etc/opkg/distfeeds.conf.server files/etc/opkg/distfeeds.conf.mirror
-        sed -i "s/http:\/\/192.168.123.100:2345\/snapshots/https:\/\/openwrt.cc\/snapshots\/$(date +"%Y-%m-%d")\/lean/g" files/etc/opkg/distfeeds.conf.mirror
-        if "$IPV6MOD_IN_FIRMWARE" = 'true'
-        then
-            mkdir -p files/www/ipv6-modules
-            cp bin/packages/$PLATFORM/luci/luci-proto-ipv6* files/www/ipv6-modules
-            cp bin/packages/$PLATFORM/base/{ipv6helper*,odhcpd-ipv6only*,odhcp6c*,6in4*} "files/www/ipv6-modules"
-            cp bin/targets/$TARGET/$SUBTARGET/packages/{ip6tables*,kmod-nf-nat6*,kmod-ipt-nat6*,kmod-sit*,kmod-ip6tables-extra*} "files/www/ipv6-modules"
-            mkdir -p files/bin
-            cp ../scripts/ipv6-helper.sh files/bin/ipv6-helper
-        fi
-        make package/install -j$(nproc) || make package/install -j1 V=s
-        make target/install -j$(nproc) || make target/install -j1 V=s
-        make checksum
-        echo "::set-output name=GENERATE_STATUS::success"
-
-    - name: Upload Bin Folder
-      uses: actions/upload-artifact@main
-      if: steps.generate.outputs.GENERATE_STATUS == 'success'
-      with:
-        name: bin-archive
-        path: openwrt/bin
-        
-  Upload:
-    needs: [Build]
-    runs-on: ubuntu-18.04
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@main
-        
-      - name: Restore Variables
-        run: |
-          echo "OPENWRTROOT=$(echo '${{needs.Build.outputs.OPENWRTROOT}}')" >> $GITHUB_ENV
-          echo "PLATFORM=$(echo '${{needs.Build.outputs.PLATFORM}}')" >> $GITHUB_ENV
-          echo "TARGET=$(echo '${{needs.Build.outputs.TARGET}}')" >> $GITHUB_ENV
-          echo "SUBTARGET=$(echo '${{needs.Build.outputs.SUBTARGET}}')" >> $GITHUB_ENV
-          echo "FIRMWARE=$(echo '${{needs.Build.outputs.FIRMWARE}}')" >> $GITHUB_ENV
-          echo "GENERATE_STATUS=$(echo '${{needs.Build.outputs.GENERATE_STATUS}}')" >> $GITHUB_ENV
-        
-      - name: Download Bin Folder
-        uses: actions/download-artifact@v2
-        if: env.GENERATE_STATUS == 'success'
-        with:
-          name: bin-archive
-          path: openwrt/bin
+          mkdir -p ./new/package
+          cp -rf $(find ./openwrt/bin -type f -name "*.ipk") ./new/package
           
-      - name: Deploy Packages-Server
-        if: env.GENERATE_STATUS == 'success'
-        run: |
-          mkdir -p server/web/snapshots/targets/$TARGET/$SUBTARGET
-          cp -r $OPENWRTROOT/bin/packages server/web/snapshots
-          cp -r $OPENWRTROOT/bin/targets/$TARGET/$SUBTARGET/packages server/web/snapshots/targets/$TARGET/$SUBTARGET
-          mv server packages-server
-          zip -qrm packages-server.zip packages-server
-          mv packages-server.zip $OPENWRTROOT/bin/targets/$TARGET/$SUBTARGET
+    - name: 上传bin文件夹(固件+ipk)在github空间
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_bin_${{ steps.compile.outputs.DEVICE_NAME }}_${{ steps.compile.outputs.FILE_DATE }}
+        path: openwrt/bin
 
-      - name: Rclone Upload
-        env:
-          RCLONE_REMOTE: ${{ secrets.RCLONE_REMOTE }}
-        if: env.GENERATE_STATUS == 'success' && env.UPLOAD_RCLONE == 'true' && env.RCLONE_REMOTE != ''
-        run: |
-          cd $OPENWRTROOT
-          curl https://rclone.org/install.sh | sudo bash
-          mkdir -p ~/.config/rclone/
-          cat << EOF > ~/.config/rclone/rclone.conf
-          ${{ secrets.RCLONE_CONFIG }}
-          EOF
-          rclone copy bin/targets/$TARGET/$SUBTARGET $RCLONE_REMOTE:$(date +"%Y-%m-%d")/lean/targets/$TARGET/$SUBTARGET
-          echo "::warning file=Firmware-GoogleDrive::Download Link: https://drive.google.com/drive/folders/1SkNpJkhmG8veheL3ADVFoVTkvfhWjW0P"
+    - name: 上传IPK
+      uses: actions/upload-artifact@main
+      with:
+        name: OpenWrt-Mod-Ipk
+        path: ./new/package
+    
+    - name: 整理固件文件夹
+      id: organize
+      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "::set-output name=FIRMWARE::$PWD"
+        echo "::set-output name=status::success"
 
-      - name: Organize Files
-        id: organize
-        if: env.GENERATE_STATUS == 'success'
-        run: |
-          cd ${FIRMWARE}
-          rm -rf packages
-          cd $OPENWRTROOT/bin/targets/$TARGET/
-          curl -fsSL git.io/file-transfer | sh
-          df -hT $PWD
-          echo "::set-output name=ORGANIZE_STATUS::success"
+    - name: 上传固件在github空间
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: OpenWrt_firmware_${{ steps.compile.outputs.DEVICE_NAME }}_${{ steps.compile.outputs.FILE_DATE }}
+        path: ${{ steps.organize.outputs.FIRMWARE }}
 
-      - name: Upload Firmware To CowTransfer
-        if: steps.organize.outputs.ORGANIZE_STATUS == 'success' && env.UPLOAD_COWTRANSFER == 'true'
-        run: |
-          cd $OPENWRTROOT/bin/targets/$TARGET/
-          ./transfer cow --block 2621440 -s -p 64 --no-progress ${FIRMWARE} 2>&1 | tee cowtransfer.log
-          echo "::warning file=Firmware-Cowtransfer.com::$(cat cowtransfer.log | grep https)"
+    - name: 上传固件到奶牛快传
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_COWTRANSFER == 'true' && !cancelled()
+      run: |
+        curl -fsSL git.io/file-transfer | sh
+        ./transfer cow --block 2621440 -s -p 64 --no-progress ${{ steps.organize.outputs.FIRMWARE }} | tee cowtransfer.log
+        echo "::warning file=cowtransfer.com::$(cat cowtransfer.log | grep https)"
 
-      - name: Upload Firmware To WeTransfer
-        if: steps.organize.outputs.ORGANIZE_STATUS == 'success' && env.UPLOAD_WETRANSFER == 'true'
-        run: |
-          cd $OPENWRTROOT/bin/targets/$TARGET/
-          ./transfer wet -s -p 16 --no-progress ${FIRMWARE} 2>&1 | tee wetransfer.log
-          echo "::warning file=Firmware-Wetransfer.com::$(cat wetransfer.log | grep https)"
-
-      - name: Delete Artifacts
-        uses: geekyeggo/delete-artifact@v1
-        with:
-          name: |
-            bin-archive
+    - name: 上传固件到WeTransfer
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
+      run: |
+        curl -fsSL git.io/file-transfer | sh
+        ./transfer wet -s -p 16 --no-progress ${{ steps.organize.outputs.FIRMWARE }} | tee wetransfer.log
