@@ -16,10 +16,6 @@ pushd package/lean
 git clone --depth=1 https://github.com/fw876/helloworld
 popd
 
-# Clone community packages to package/community
-mkdir package/community
-pushd package/community
-
 # Add Lienol's Packages
 git clone --depth=1 https://github.com/Lienol/openwrt-package
 
@@ -53,9 +49,6 @@ rm -rf ../lean/luci-app-docker
 git clone --depth=1 https://github.com/KFERMercer/luci-app-dockerman
 git clone --depth=1 https://github.com/lisaac/luci-lib-docker
 
-# Add luci-app-gowebdav
-git clone --depth=1 https://github.com/project-openwrt/openwrt-gowebdav
-
 # Add luci-app-jd-dailybonus
 git clone --depth=1 https://github.com/jerrykuku/luci-app-jd-dailybonus
 
@@ -66,9 +59,6 @@ rm -rf ../lean/luci-theme-argon
 
 # Add tmate
 git clone --depth=1 https://github.com/project-openwrt/openwrt-tmate
-
-# Add subconverter
-git clone --depth=1 https://github.com/tindy2013/openwrt-subconverter
 
 # Add smartdns
 svn co https://github.com/pymumu/smartdns/trunk/package/openwrt ../smartdns
@@ -84,24 +74,3 @@ sed -i "/commit luci/i\uci set luci.main.mediaurlbase='/luci-static/argon'" zzz-
 sed -i '/http/d' zzz-default-settings
 sed -i '/exit/i\chmod +x /bin/ipv6-helper' zzz-default-settings
 popd
-
-# Fix libssh
-pushd feeds/packages/libs
-rm -rf libssh
-svn co https://github.com/openwrt/packages/trunk/libs/libssh
-popd
-
-# Use Lienol's https-dns-proxy package
-pushd feeds/packages/net
-rm -rf https-dns-proxy
-svn co https://github.com/Lienol/openwrt-packages/trunk/net/https-dns-proxy
-popd
-
-# Use snapshots syncthing package
-pushd feeds/packages/utils
-rm -rf syncthing
-svn co https://github.com/openwrt/packages/trunk/utils/syncthing
-popd
-
-# Change default shell to zsh
-sed -i 's/\/bin\/ash/\/usr\/bin\/zsh/g' package/base-files/files/etc/passwd
